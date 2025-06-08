@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- CSS Section -->
+    <style>
+        /* General-purpose CSS reset for consistency across browsers. */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* 
+          Core styles for the body and html. 
+          - Ensures the app takes up the full viewport.
+          - Sets the background color for the void.
+          - Sets a modern, clean font.
+        */
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* Prevents scrollbars from appearing */
+            background-color: #05050a; /* A slightly softer black */
+            color: #FFFFFF;
+            font-family: 'Poppins', sans-serif;
+            cursor: none; /* The target reticle will act as the cursor */
+        }
+
+        /* Styles for the game canvas. */
+        #game-canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Container for the score UI. */
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 1.2rem;
+            color: rgba(255, 255, 255, 0.8);
+            pointer-events: none;
+            user-select: none; /* Prevents text selection */
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+        
+        #ui-container.hidden {
+            opacity: 0;
+        }
+
+        /* 
+          Generic styles for all modal overlays (Start and Game Over).
+          - A flex container to perfectly center the content.
+          - Fills the entire screen with a semi-transparent background.
+        */
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(5, 5, 10, 0.75);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            opacity: 1;
+            transition: opacity 0.5s ease;
+            backdrop-filter: blur(5px);
+            cursor: default; 
+        }
+
+        .modal-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .modal-content {
+            padding: 40px;
+            background-color: rgba(15, 15, 25, 0.9);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 500px;
+        }
+
+        .modal-content h1 {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: #FFFFFF;
+        }
+
+        .modal-content p {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .modal-content .metric {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #FFFFFF;
+            margin-top: 20px;
+        }
+
+        .modal-content .info {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 30px;
+        }
+        
+        .modal-content .instructions {
+            font-size: 1.1rem;
+            color: #a0a0ff;
+            margin-bottom: 30px;
+        }
+
+        /* Style for action buttons in modals */
+        .modal-button {
+            padding: 12px 25px;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #000000;
+            background-color: #FFFFFF;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.2s ease;
+        }
+
+        .modal-button:hover {
+            background-color: #DDDDDD;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <!-- HTML Section: Defines the structure of the game elements -->
+
+    <canvas id="game-canvas"></canvas>
+
+    <div id="ui-container" class="hidden">
+        <p>SCORE: <span id="score-value">0</span></p>
+    </div>
+
+    <!-- NEW: Start screen modal for better onboarding -->
+    <div id="start-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h1>Trace</h1>
+            <p class="instructions">Guide the Spark to collect Echoes. Avoid your own recently created Trace.</p>
+            <button id="start-button" class="modal-button">Click to Begin</button>
+        </div>
+    </div>
+
+    <!-- Game over modal. Now uses the shared .modal-overlay class -->
+    <div id="game-over-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h1>Game Over</h1>
+            <p>Final Score: <span id="final-score">0</span></p>
+            <p class="metric">Average Path Efficiency: <span id="path-efficiency">0</span>%</p>
+            <p class="info">A higher efficiency means more direct, risky paths.</p>
+            <button id="restart-button" class="modal-button">Play Again</button>
+        </div>
+    </div>
+    
+    <!-- JavaScript Section: Contains all game logic -->
+    <script>
+        "use strict";
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            //================================================================
+            // 1. SETUP & INITIALIZATION
+            //================================================================
+
+            const canvas = document.getElementById('game-canvas');
+            const ctx = canvas.getContext('2d');
+
+            // UI Elements
+            const uiContainer = document.getElementById('ui-container');
+            const scoreValueEl = document.getElementById('score-value');
+            const startModal = document.getElementById('start-modal');
+            const startButton = document.getElementById('start-button');
+            const gameOverModal = document.getElementById('game-over-modal');
+            const finalScoreEl = document.getElementById('final-score');
+            const pathEfficiencyEl = document.getElementById('path-efficiency');
+            const restartButton = document.getElementById('restart-button');
+
+            const GAME_CONSTANTS = {
+                SPARK_BASE_SPEED: 220,
+                SPARK_RADIUS: 4,          
+                ECHO_RADIUS: 10,
+                TRACE_FADE_DURATION: 5000, // 5 seconds
+                COLLISION_IMMUNITY_SEGMENTS: 15,
+                DIFFICULTY_SCALING: 1.015,
+                ECHO_SPAWN_PADDING: 50,
+            };
+
+            let gameState = {};
+            const mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+            let lastTime = 0;
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+
+            function init() {
+                gameState = {
+                    isGameOver: false,
+                    gameStarted: false, // NEW state to manage pre-game
+                    score: 0,
+                    gameSpeed: 1.0,
+                    spark: {
+                        x: canvas.width / 2,
+                        y: canvas.height / 2,
+                        radius: GAME_CONSTANTS.SPARK_RADIUS,
+                        vx: 0, // velocity x
+                        vy: 0  // velocity y
+                    },
+                    echo: null,
+                    trace: [],
+                    pathMetrics: {
+                        efficiencies: [],
+                        lastEchoPosition: { x: canvas.width / 2, y: canvas.height / 2 },
+                        pathLengthSinceEcho: 0,
+                    }
+                };
+
+                // Show start screen, hide other UI
+                startModal.classList.remove('hidden');
+                gameOverModal.classList.add('hidden');
+                uiContainer.classList.add('hidden');
+                
+                spawnEcho();
+                // Start a passive loop for the pre-game screen (draws background elements)
+                requestAnimationFrame(gameLoop);
+            }
+
+            //================================================================
+            // 2. GAME LOOP & CORE LOGIC
+            //================================================================
+
+            function gameLoop(timestamp) {
+                if (!lastTime) lastTime = timestamp;
+                const deltaTime = (timestamp - lastTime) / 1000;
+                lastTime = timestamp;
+
+                // Only update game logic if the game has started and is not over
+                if (gameState.gameStarted && !gameState.isGameOver) {
+                    update(deltaTime);
+                }
+                
+                draw(); // Always draw the scene
+
+                if (!gameState.isGameOver) {
+                    requestAnimationFrame(gameLoop);
+                } else {
+                    // One final draw to show the collision, then show the modal
+                    draw();
+                    showGameOverScreen();
+                }
+            }
+
+            function update(deltaTime) {
+                const spark = gameState.spark;
+                const lastPosition = { x: spark.x, y: spark.y };
+
+                // Spark Movement
+                const dx = mouse.x - spark.x;
+                const dy = mouse.y - spark.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const speed = GAME_CONSTANTS.SPARK_BASE_SPEED * gameState.gameSpeed;
+
+                if (dist > 1) {
+                    spark.vx = (dx / dist) * speed;
+                    spark.vy = (dy / dist) * speed;
+                    spark.x += spark.vx * deltaTime;
+                    spark.y += spark.vy * deltaTime;
+                } else {
+                    spark.vx = 0;
+                    spark.vy = 0;
+                }
+                
+                // Trace Management
+                const distanceMoved = getDistance(lastPosition.x, lastPosition.y, spark.x, spark.y);
+                gameState.pathMetrics.pathLengthSinceEcho += distanceMoved;
+                
+                gameState.trace.push({ x: spark.x, y: spark.y, timestamp: performance.now() });
+                manageFadingTrace();
+
+                // Collision Detection
+                checkEchoCollision();
+                checkTraceCollision();
+            }
+
+            function draw() {
+                ctx.fillStyle = '#05050a';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                drawTrace();
+                drawEcho();
+                // Only draw the spark and target if the game hasn't ended.
+                if (!gameState.isGameOver) {
+                    drawSpark();
+                    drawTarget();
+                }
+            }
+
+            //================================================================
+            // 3. GAME MECHANICS & STATE
+            //================================================================
+            
+            function startGame() {
+                gameState.gameStarted = true;
+                startModal.classList.add('hidden');
+                uiContainer.classList.remove('hidden');
+                lastTime = performance.now(); // Reset timer to prevent jump
+            }
+            
+            function spawnEcho() {
+                const padding = GAME_CONSTANTS.ECHO_SPAWN_PADDING;
+                gameState.echo = {
+                    x: Math.random() * (canvas.width - padding * 2) + padding,
+                    y: Math.random() * (canvas.height - padding * 2) + padding,
+                    radius: GAME_CONSTANTS.ECHO_RADIUS
+                };
+            }
+            
+            function manageFadingTrace() {
+                const now = performance.now();
+                const fadeDuration = GAME_CONSTANTS.TRACE_FADE_DURATION;
+                while (gameState.trace.length > 0 && now - gameState.trace[0].timestamp > fadeDuration) {
+                    gameState.trace.shift();
+                }
+            }
+
+            function checkEchoCollision() {
+                if (!gameState.echo) return;
+                const dist = getDistance(gameState.spark.x, gameState.spark.y, gameState.echo.x, gameState.echo.y);
+                if (dist < gameState.spark.radius + gameState.echo.radius) {
+                    gameState.score++;
+                    scoreValueEl.textContent = gameState.score;
+                    gameState.gameSpeed *= GAME_CONSTANTS.DIFFICULTY_SCALING;
+                    
+                    const straightLine = getDistance(
+                        gameState.pathMetrics.lastEchoPosition.x,
+                        gameState.pathMetrics.lastEchoPosition.y,
+                        gameState.echo.x, gameState.echo.y
+                    );
+                    if (gameState.pathMetrics.pathLengthSinceEcho > 0) {
+                        const efficiency = straightLine / gameState.pathMetrics.pathLengthSinceEcho;
+                        gameState.pathMetrics.efficiencies.push(efficiency);
+                    }
+                    
+                    gameState.pathMetrics.lastEchoPosition = { x: gameState.echo.x, y: gameState.echo.y };
+                    gameState.pathMetrics.pathLengthSinceEcho = 0;
+                    spawnEcho();
+                }
+            }
+            
+            function checkTraceCollision() {
+                const collisionCheckLength = gameState.trace.length - GAME_CONSTANTS.COLLISION_IMMUNITY_SEGMENTS;
+                if (collisionCheckLength <= 1) return;
+                for (let i = 0; i < collisionCheckLength - 1; i++) {
+                    const p1 = gameState.trace[i];
+                    const p2 = gameState.trace[i + 1];
+                    const dist = distToSegment(gameState.spark, p1, p2);
+                    if (dist < gameState.spark.radius + 2) { // +2 for line thickness
+                        gameState.isGameOver = true;
+                        break;
+                    }
+                }
+            }
+
+            function showGameOverScreen() {
+                finalScoreEl.textContent = gameState.score;
+                const efficiencies = gameState.pathMetrics.efficiencies;
+                let avgEfficiency = efficiencies.length > 0 ? (efficiencies.reduce((a, b) => a + b, 0) / efficiencies.length) * 100 : 0;
+                pathEfficiencyEl.textContent = avgEfficiency.toFixed(1);
+                gameOverModal.classList.remove('hidden');
+                uiContainer.classList.add('hidden');
+            }
+
+            //================================================================
+            // 4. IMPROVED DRAWING FUNCTIONS
+            //================================================================
+
+            /**
+             * NEW: Draws a target reticle at the mouse position for intuitive control.
+             */
+            function drawTarget() {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(mouse.x - 10, mouse.y);
+                ctx.lineTo(mouse.x + 10, mouse.y);
+                ctx.moveTo(mouse.x, mouse.y - 10);
+                ctx.lineTo(mouse.x, mouse.y + 10);
+                ctx.stroke();
+            }
+
+            /**
+             * IMPROVED: Draws the spark as a comet with a tail to show direction.
+             */
+            function drawSpark() {
+                const spark = gameState.spark;
+                // Tail position is opposite to the velocity vector
+                const tailLength = 10;
+                const speed = Math.sqrt(spark.vx * spark.vx + spark.vy * spark.vy);
+                let tailX = spark.x;
+                let tailY = spark.y;
+
+                if (speed > 0) {
+                    tailX -= (spark.vx / speed) * tailLength;
+                    tailY -= (spark.vy / speed) * tailLength;
+                }
+
+                // Create a gradient from head to tail
+                const gradient = ctx.createLinearGradient(spark.x, spark.y, tailX, tailY);
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(1, 'rgba(100, 200, 255, 0)');
+
+                ctx.beginPath();
+                ctx.moveTo(tailX, tailY);
+                ctx.lineTo(spark.x + spark.radius, spark.y);
+                ctx.lineTo(spark.x - spark.radius, spark.y);
+                ctx.closePath();
+                
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+
+            function drawEcho() {
+                if (!gameState.echo) return;
+                const pulse = Math.sin(performance.now() * 0.005) * 2;
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(gameState.echo.x, gameState.echo.y, gameState.echo.radius + pulse, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.fill();
+            }
+
+            /**
+             * IMPROVED: Draws the trace with dynamic color and width for clarity.
+             */
+            function drawTrace() {
+                if (gameState.trace.length < 2) return;
+                
+                const now = performance.now();
+                const fadeDuration = GAME_CONSTANTS.TRACE_FADE_DURATION;
+                const maxLineWidth = 5;
+
+                for (let i = 0; i < gameState.trace.length - 1; i++) {
+                    const p1 = gameState.trace[i];
+                    const p2 = gameState.trace[i + 1];
+                    
+                    const age = (now - p1.timestamp) / fadeDuration; // 0 (new) to 1 (old)
+                    if (age > 1) continue;
+
+                    // Interpolate color from 'hot' cyan to 'cold' blue
+                    const hue = 180 + 60 * age; // 180 (cyan) -> 240 (blue)
+                    const lightness = 70 - 40 * age; // 70% (bright) -> 30% (dark)
+                    const alpha = 1 - age;
+                    
+                    // Interpolate line width
+                    const lineWidth = (1 - age) * maxLineWidth + 1; // Fades from max+1 to 1
+
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.strokeStyle = `hsla(${hue}, 100%, ${lightness}%, ${alpha})`;
+                    ctx.lineWidth = lineWidth;
+                    ctx.lineCap = 'round'; // Makes lines smoother
+                    ctx.stroke();
+                }
+            }
+
+            //================================================================
+            // 5. UTILITY FUNCTIONS
+            //================================================================
+
+            function getDistance(x1, y1, x2, y2) {
+                return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+            }
+            
+            function distToSegment(p, v, w) {
+                const l2 = getDistance(v.x, v.y, w.x, w.y) ** 2;
+                if (l2 === 0) return getDistance(p.x, p.y, v.x, v.y);
+                let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+                t = Math.max(0, Math.min(1, t));
+                return getDistance(p.x, p.y, v.x + t * (w.x - v.x), v.y + t * (w.y - v.y));
+            }
+
+            //================================================================
+            // 6. EVENT LISTENERS
+            //================================================================
+
+            window.addEventListener('resize', resizeCanvas);
+            window.addEventListener('mousemove', e => {
+                mouse.x = e.clientX;
+                mouse.y = e.clientY;
+            });
+            startButton.addEventListener('click', startGame);
+            restartButton.addEventListener('click', init);
+
+            // Initial setup call
+            resizeCanvas();
+            init();
+
+        });
+    </script>
+</body>
+</html>
